@@ -1,0 +1,171 @@
+---
+title: "COVID-19 Analysis"
+author: "iffig"
+date: '2022-06-13'
+output: html_document
+---
+
+# Objective 
+tbd
+# Data Preparation 
+
+## Importing 
+```{r libraryImports, echo=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r importData, echo=FALSE}
+url <- "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/"
+files <- c("time_series_covid19_confirmed_US.csv", 
+           "time_series_covid19_deaths_US.csv")
+
+urls <- str_c(url, files)
+us_cases <-read.csv(urls[1],  check.names=FALSE)
+us_deaths <-read.csv(urls[2],  check.names=FALSE)
+```
+
+## Cleaning 
+
+Next, re-orient the columns so they are more readable, and remove unnecessary attributes:
+
+```{r usCases, echo=FALSE}
+us_cases <- us_cases %>%
+    pivot_longer(cols = -(UID:Combined_Key), 
+                 names_to = "date", 
+                 values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat,Long_))
+```
+
+```{r usDeaths, echo=FALSE}
+us_deaths <- us_deaths %>%
+    pivot_longer(cols = -(UID:Population), 
+                 names_to = "date", 
+                 values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat,Long_))
+```
+
+Can join the cases and deaths since most of the other data is the same:
+```{r join, echo=FALSE}
+us_covid <- us_deaths %>%
+  left_join(us_cases, by = c("date", "Combined_Key", "Province_State")) %>%
+  select(c(Combined_Key, Population,date,deaths, cases,Province_State))
+
+```
+
+# Analysis 
+
+## US Daily: 
+```{r us_summary, echo=FALSE}
+us_overall <- us_covid %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  mutate(cases_per_mill = cases * 1000000 / Population) %>%
+  select(date, cases, deaths, deaths_per_mill, cases_per_mill, Population) %>%
+  ungroup()
+
+us_overall <-us_overall %>%
+    mutate(new_cases = cases - lag(cases),  new_deaths = deaths - lag(deaths))
+```
+
+## In Colorado 
+```{r colorado, echo=FALSE}
+
+colorado_cases <- us_covid %>%
+  filter(Province_State == "Colorado")
+
+```
+
+```{r colorado_cases, echo=FALSE}
+
+colorado_overall <- colorado_cases %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  mutate(cases_per_mill = cases * 1000000 / Population) %>%
+  select(date, cases, deaths, deaths_per_mill, cases_per_mill, Population) %>%
+  ungroup()
+
+colorado_overall <-colorado_overall %>%
+    mutate(new_cases = cases - lag(cases),  new_deaths = deaths - lag(deaths))
+```
+
+## Overall Cases US vs Colorado
+```{r cases, echo=FALSE}
+ggplot() + 
+geom_point(data=colorado_overall, aes(x = date, y = cases_per_mill, color="Colorado")) + 
+geom_point(data=us_overall, aes(x = date, y = cases_per_mill, color="US")) + 
+theme(legend.position = "bottom", 
+      axis.text.x = element_text(angle = 90)) + 
+  xlab("Date") + 
+  ylab("Cases Per Million") +
+labs(title = str_c("COVID19 Cases"))
+```
+
+## Overall Deaths US vs Colorado
+
+```{r deaths, echo=FALSE}
+ggplot() + 
+geom_point(data=colorado_overall, aes(x = date, y = deaths_per_mill, color="Colorado")) + 
+geom_point(data=us_overall, aes(x = date, y = deaths_per_mill, color="US")) + 
+  xlab("Date") + 
+  ylab("Deaths Per Million") +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 Deaths")
+```
+
+
+## New Daily Cases US vs Colorado
+```{r daily_cases, echo=FALSE}
+ggplot() + 
+geom_point(data=colorado_overall, aes(x = date, y = new_cases, color="Colorado")) + 
+geom_point(data=us_overall, aes(x = date, y = new_cases, color="US")) + 
+scale_y_log10() + 
+    xlab("Date") + 
+  ylab("New Cases") +
+theme(legend.position = "bottom", 
+      axis.text.x = element_text(angle = 90)) + 
+labs(title = str_c("New Daily Cases"))
+```
+
+## New Daily Deaths US cs Colorado
+```{r daily_deaths, echo=FALSE}
+ggplot() + 
+geom_point(data=colorado_overall, aes(x = date, y = new_deaths, color="Colorado")) + 
+geom_point(data=us_overall, aes(x = date, y = new_deaths, color="US")) + 
+scale_y_log10() + 
+    xlab("Date") + 
+  ylab("New Deaths") +
+theme(legend.position = "bottom", 
+      axis.text.x = element_text(angle = 90)) + 
+labs(title = str_c("New Daily Deaths"))
+```
+
+## Modeling Colorado Cases
+
+```{r model, echo=FALSE}
+mod <- lm(deaths_per_mill ~ cases_per_mill, data = colorado_overall)
+summary(mod)
+
+
+colorado_overall %>% mutate(pred = predict(mod)) 
+
+predictions <- colorado_overall %>% mutate(pred = predict(mod))
+predictions %>% 
+  ggplot() + 
+  geom_point(aes(x = cases_per_mill, y = deaths_per_mill, color = "Actual")) + 
+  geom_point(aes(x = cases_per_mill, y = pred, color = "prediction")) +
+  xlab("Cases") + 
+  ylab("Deaths")+
+  theme(axis.text.x = element_text(angle = 90)) + 
+  labs(title = str_c("Model of Cases v. Deaths"))
+
+```
+
+# Conclusions
